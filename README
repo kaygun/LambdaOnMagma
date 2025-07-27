@@ -1,0 +1,1 @@
+This is a untyped lambda-calculus implementation I wrote in Scala 3 with the help of an LLM. Unlike my earlier lambda-mu implementations, I based this version on mathematical abstractions such as magmas and catemorphisms. It was a lot of fun. I know, I should have written this in Haskell.

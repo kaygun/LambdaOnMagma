@@ -1,0 +1,8 @@
+let zero = (λf.λx. x)
+let S = (λn.λf.λx. f (n f x))
+let add = (λn.λm.λf.λx. n f (m f x))
+let mul = (λn.λm.λf. n (m f))
+let F = zero
+let T = (λf.λx. f)
+let or = (λa.λb. a a b)
+let and = (λa.λb. a b a)
