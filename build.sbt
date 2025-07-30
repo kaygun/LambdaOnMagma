@@ -1,6 +1,5 @@
 ThisBuild / version := "0.1.0-SNAPSHOT"
 ThisBuild / scalaVersion := "3.7.1"
-
 lazy val root = (project in file("."))
   .settings(
     name := "lambda-magma",
@@ -28,5 +27,6 @@ lazy val root = (project in file("."))
     ),
     
     // Main class for running the REPL
-    Compile / mainClass := Some("LambdaMagma.launch")
+    Compile / mainClass := Some("LambdaMagma.LambdaREPL")
   )
+

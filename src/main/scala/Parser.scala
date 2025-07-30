@@ -6,29 +6,29 @@ object LambdaParser extends JavaTokenParsers:
   override val whiteSpace = """(\s|//.*|(?m)/\*(\*(?!/)|[^*])*\*/)+""".r
   
   // Parse to named expressions
-  def lambda: Parser[BinTree[Expr[String]]] = 
+  def lambda: Parser[BinTree[Term[String]]] = 
     (("\\" | "λ") ~> ident <~ ".") ~ expression ^^ {
-      case param ~ body => Expr.l(param)(body)
+      case param ~ body => Term.l(param)(body)
     }
   
-  def variable: Parser[BinTree[Expr[String]]] = 
-    ident ^^ Expr.v
+  def variable: Parser[BinTree[Term[String]]] = 
+    ident ^^ Term.v
   
-  def parenthesized: Parser[BinTree[Expr[String]]] = 
+  def parenthesized: Parser[BinTree[Term[String]]] = 
     "(" ~> expression <~ ")"
   
-  def atom: Parser[BinTree[Expr[String]]] = 
+  def atom: Parser[BinTree[Term[String]]] = 
     parenthesized | variable
   
-  def application: Parser[BinTree[Expr[String]]] = 
+  def application: Parser[BinTree[Term[String]]] = 
     rep1(lambda | atom) ^^ { atoms =>
       atoms.tail.foldLeft(atoms.head)(BinTree.binTreeMagma.op)
     }
   
-  def expression: Parser[BinTree[Expr[String]]] = 
+  def expression: Parser[BinTree[Term[String]]] = 
     lambda | application
   
-  def parse(input: String): Either[String, BinTree[Expr[String]]] =
+  def parse(input: String): Either[String, BinTree[Term[String]]] =
     parseAll(expression, input) match
       case Success(result, _) => Right(result)
       case NoSuccess(msg, _) => Left(msg)
