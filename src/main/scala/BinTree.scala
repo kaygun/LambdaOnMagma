@@ -4,23 +4,23 @@ trait Magma[A]:
   def op(x: A, y: A): A
   extension (x: A) def $ (y: A): A = op(x, y)
 
-enum BinTree[A]:
+enum Tree[A]:
   case Leaf(value: A)
-  case Branch(left: BinTree[A], right: BinTree[A])
+  case Branch(left: Tree[A], right: Tree[A])
 
-object BinTree:
+object Tree:
   import scala.Predef.identity
 
-  given binTreeMagma[A]: Magma[BinTree[A]] with
-    def op(x: BinTree[A], y: BinTree[A]): BinTree[A] = Branch(x, y)
+  given treeMagma[A]: Magma[Tree[A]] with
+    def op(x: Tree[A], y: Tree[A]): Tree[A] = Branch(x, y)
   
-  def leaf[A](value: A): BinTree[A] = Leaf(value)
+  def leaf[A](value: A): Tree[A] = Leaf(value)
 
-  // A context-sensitive catamorphism over BinTree[A].
+  // A context-sensitive catamorphism over Tree[A].
   // Threads an environment of type C downwards using succ.
   // If C = Unit (the default), `succ` defaults to identity.
   def readerCat[A, B, C](
-    tree: BinTree[A],
+    tree: Tree[A],
     context: C,
     succ: C => C = identity,
     leafFn: A => B
@@ -33,24 +33,25 @@ object BinTree:
         val r1 = readerCat(r, context1, succ, leafFn)
         monoid.op(l1,r1)
 
-  def map[A, B](tree: BinTree[A])(f: A => B): BinTree[B] =
-    given Magma[BinTree[B]] = binTreeMagma
+  def map[A, B](tree: Tree[A])(f: A => B): Tree[B] =
+    given Magma[Tree[B]] = treeMagma
     readerCat(tree, (), identity, (a:A) => Leaf(f(a)))
 
-  def fold[A, B](tree: BinTree[A])(f: A => B)(using monoid: Magma[B]): B =
+  def fold[A, B](tree: Tree[A])(f: A => B)(using monoid: Magma[B]): B =
     readerCat(tree, (), identity, f)
 
   def transform[A, C](
-    tree: BinTree[A],
+    tree: Tree[A],
     context: C,
     succ: C => C,
-    rule: (BinTree[A], C) => Option[BinTree[A]]
-  ): BinTree[A] =
-    given Magma[BinTree[A]] = binTreeMagma
+    rule: (Tree[A], C) => Option[Tree[A]]
+  ): Tree[A] =
+    given Magma[Tree[A]] = treeMagma
 
     readerCat(tree, context, succ, (a: A) => Leaf(a)) match
       case result =>
         rule(result, context).getOrElse(result)
 
-  def transform[A](tree: BinTree[A])(rule: BinTree[A] => Option[BinTree[A]]): BinTree[A] =
+  def transform[A](tree: Tree[A])(rule: Tree[A] => Option[Tree[A]]): Tree[A] =
     transform(tree, (), _ => (), (t, _) => rule(t))
+

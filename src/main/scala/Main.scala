@@ -5,60 +5,54 @@ import scala.io.StdIn.readLine
 import scala.io.Source
 import scala.util.{Try, Success, Failure}
 import java.io.{File, PrintWriter, FileNotFoundException}
-import BinTree._
+import Tree._
 import Term._
 import LambdaParser._
 
 object LambdaREPL extends App:
-  private val environment: mutable.Map[String, BinTree[Term[String]]] = mutable.Map.empty
-  private var normalizeResults: Boolean = true
+  private val environment: mutable.Map[String, Tree[Term[String]]] = mutable.Map.empty
 
   // Pretty printing for both String and Int indexed terms
-  private def pretty(tree: BinTree[Term[String]]): String = tree match
-    case BinTree.Leaf(Left(Var(name))) => name
-    case BinTree.Leaf(Right(Lambda(Var(param), body))) => s"λ$param.${pretty(body)}"
-    case BinTree.Branch(left, right) => s"(${pretty(left)} ${pretty(right)})"
-
-  private def prettyDB(tree: BinTree[Term[Int]]): String = tree match
-    case BinTree.Leaf(Left(Var(index))) => index.toString
-    case BinTree.Leaf(Right(Lambda(_, body))) => s"λ.${prettyDB(body)}"
-    case BinTree.Branch(left, right) => s"(${prettyDB(left)} ${prettyDB(right)})"
+  private def pretty(tree: Tree[Term[String]]): String = tree match
+    case Tree.Leaf(Var(name)) => name  // Remove Left() pattern
+    case Tree.Leaf(Lambda(Var(param), body)) => s"λ$param.${pretty(body)}"  // Remove Right() pattern
+    case Tree.Branch(left, right) => s"(${pretty(left)} ${pretty(right)})"
 
   // Resolve variables and collect free vars in one pass
-  private def resolveAndGetFreeVars(expr: BinTree[Term[String]]): (BinTree[Term[String]], Set[String]) =
-    import BinTree.*
-    given Magma[BinTree[Term[String]]] = BinTree.binTreeMagma
-    given Magma[(BinTree[Term[String]], Set[String])] with
-      def op(x: (BinTree[Term[String]], Set[String]), y: (BinTree[Term[String]], Set[String])): (BinTree[Term[String]], Set[String]) = 
-        (BinTree.binTreeMagma.op(x._1, y._1), x._2 ++ y._2)
+  private def resolve(expr: Tree[Term[String]]): (Tree[Term[String]], Set[String]) =
+    import Tree.*
+    given Magma[Tree[Term[String]]] = Tree.treeMagma
+    given Magma[(Tree[Term[String]], Set[String])] with
+      def op(x: (Tree[Term[String]], Set[String]), y: (Tree[Term[String]], Set[String])): (Tree[Term[String]], Set[String]) = 
+        (Tree.treeMagma.op(x._1, y._1), x._2 ++ y._2)
     
-    def go(tree: BinTree[Term[String]], bound: Set[String]): (BinTree[Term[String]], Set[String]) =
+    def resolveHelper(tree: Tree[Term[String]], bound: Set[String]): (Tree[Term[String]], Set[String]) =
       fold(tree)({
-        case Left(Var(name)) => 
-          if bound.contains(name) then (Leaf(Left(Var(name))), Set.empty)
+        case Var(name) =>
+          if bound.contains(name) then (Leaf(Var(name)), Set.empty)
           else environment.get(name) match
-            case Some(definition) => go(definition, bound)
-            case None => (Leaf(Left(Var(name))), Set(name))
-        case Right(Lambda(Var(param), body)) => 
-          val (resolvedBody, freeVars) = go(body, bound + param)
-          (Leaf(Right(Lambda(Var(param), resolvedBody))), freeVars)
+            case Some(definition) => resolveHelper(definition, bound)
+            case None => (Leaf(Var(name)), Set(name))
+        case Lambda(Var(param), body) =>
+          val (resolvedBody, freeVars) = resolveHelper(body, bound + param)
+          (Leaf(Lambda(Var(param), resolvedBody)), freeVars)
       })
     
-    go(expr, Set.empty)
+    resolveHelper(expr, Set.empty)
 
   // Convert from De Bruijn back to named form
-  private def fromDeBruijn(tree: BinTree[Term[Int]], freeVars: List[String]): BinTree[Term[String]] =
-    import BinTree.*
-    given Magma[BinTree[Term[String]]] = BinTree.binTreeMagma
+  private def fromDeBruijn(tree: Tree[Term[Int]], freeVars: List[String]): Tree[Term[String]] =
+    import Tree.*
+    given Magma[Tree[Term[String]]] = Tree.treeMagma
     
-    def go(t: BinTree[Term[Int]], depth: Int): BinTree[Term[String]] =
+    def go(t: Tree[Term[Int]], depth: Int): Tree[Term[String]] =
       fold(t)({
-        case Left(Var(index)) =>
+        case Var(index) =>  // Remove Left() pattern
           val name = if index < depth then s"x${depth - 1 - index}"
                     else freeVars.lift(index - depth).getOrElse(s"free${index - depth}")
-          Leaf(Left(Var(name)))
-        case Right(Lambda(_, body)) =>
-          Leaf(Right(Lambda(Var(s"x$depth"), go(body, depth + 1))))
+          Leaf(Var(name))  // Remove Left() wrapper
+        case Lambda(_, body) =>  // Remove Right() pattern
+          Leaf(Lambda(Var(s"x$depth"), go(body, depth + 1)))  // Remove Right() wrapper
       })
     
     go(tree, 0)
@@ -69,7 +63,7 @@ object LambdaREPL extends App:
   private def trace(exprStr: String): Unit =
     LambdaParser.parse(exprStr) match
       case Right(expr) =>
-        val (resolved, freeVars) = resolveAndGetFreeVars(expr)
+        val (resolved, freeVars) = resolve(expr)
         val freeVarList = freeVars.toList.sorted
         var current = Term.toDeBruijn(resolved, List.empty, freeVars)
         var stepCount = 0
@@ -80,30 +74,74 @@ object LambdaREPL extends App:
           val next = Term.betaStep(current)
           stepCount += 1
           if next == current then
-            if normalizeResults then
-              val normalized = Term.betaReduce(current)
-              if normalized != current then
-                println(s"[$stepCount]: ${pretty(fromDeBruijn(normalized, freeVarList))}")
-            else
-              println("(no more single steps available)")
             return
           else
             current = next
             println(s"[$stepCount]: ${pretty(fromDeBruijn(current, freeVarList))}")
         
-        println(s"Stopped after 400 steps")
-        if normalizeResults then
-          println(s"Final: ${pretty(fromDeBruijn(Term.betaReduce(current), freeVarList))}")
+        println(s"${pretty(fromDeBruijn(Term.betaReduce(current), freeVarList))}")
       case Left(err) => println(err)
 
-  // Alpha equivalence check
-  private def alphaEq(line: String): Unit =
+  // File operations with error handling
+  private def handleHelp(): Unit =
+    println("""Commands:
+      |  let <n> = <expr>     - Define a variable
+      |  :env                 - Show environment
+      |  :clear               - Clear environment
+      |  :save <file>         - Save environment to file
+      |  :load <file>         - Load environment from file
+      |  :step <expr>         - Show single step reduction
+      |  :trace <expr>        - Show step-by-step evaluation
+      |  :eta <expr>          - Apply eta reduction
+      |  :help, :h            - Show this help
+      |  :quit, :q            - Exit REPL
+      |  <expr>               - Evaluate expression""".stripMargin)
+
+  private def handleEnv(): Unit =
+    if environment.isEmpty then println("Empty environment")
+    else environment.toSeq.sortBy((kv: (String, Tree[Term[String]])) => kv._1).foreach((k, v) => println(s"$k = ${pretty(v)}"))
+
+  private def handleClear(): Unit =
+    environment.clear()
+    println("Environment cleared")
+
+  private def handleStep(exprStr: String): Unit =
+    LambdaParser.parse(exprStr) match
+      case Right(expr) =>
+        val (resolved, freeVars) = resolve(expr)
+        val deBruijn = Term.toDeBruijn(resolved, List.empty, freeVars)
+        val stepped = Term.betaStep(deBruijn)
+        
+        if stepped == deBruijn then println(s"${pretty(resolved)} (already in normal form)")
+        else println(s"${pretty(resolved)} → ${pretty(fromDeBruijn(stepped, freeVars.toList.sorted))}")
+      case Left(err) => println(err)
+
+  private def handleEta(exprStr: String): Unit =
+    LambdaParser.parse(exprStr) match
+      case Right(expr) =>
+        val (resolved, freeVars) = resolve(expr)
+        val deBruijn = Term.toDeBruijn(resolved, List.empty, freeVars)
+        val etaReduced = Term.eta(deBruijn)
+        val result = fromDeBruijn(etaReduced, freeVars.toList.sorted)
+        println(s"η-reduction: ${pretty(resolved)} → ${pretty(result)}")
+      case Left(err) => println(err)
+
+  private def handleLet(name: String, exprStr: String): Unit =
+    if name.nonEmpty && exprStr.nonEmpty then
+      LambdaParser.parse(exprStr) match
+        case Right(expr) =>
+          environment(name) = expr
+          println(s"$name = ${pretty(expr)}")
+        case Left(err) => println(err)
+    else println("Usage: let <n> = <expr>")
+
+  private def handleAlphaEq(line: String): Unit =
     line.split("==", 2) match
       case Array(expr1Str, expr2Str) =>
         (LambdaParser.parse(expr1Str.trim), LambdaParser.parse(expr2Str.trim)) match
           case (Right(expr1), Right(expr2)) =>
-            val (resolved1, freeVars1) = resolveAndGetFreeVars(expr1)
-            val (resolved2, freeVars2) = resolveAndGetFreeVars(expr2)
+            val (resolved1, freeVars1) = resolve(expr1)
+            val (resolved2, freeVars2) = resolve(expr2)
             val allFreeVars = freeVars1 ++ freeVars2
             
             val db1 = Term.betaReduce(Term.toDeBruijn(resolved1, List.empty, allFreeVars))
@@ -116,7 +154,14 @@ object LambdaREPL extends App:
           case (_, Left(err2)) => println(s"Parse error in second expression: $err2")
       case _ => println("Usage: <expr1> == <expr2>")
 
-  // File operations with error handling
+  private def handleEval(line: String): Unit =
+    LambdaParser.parse(line) match
+      case Right(expr) =>
+        val (resolved, freeVars) = resolve(expr)
+        val deBruijn = Term.toDeBruijn(resolved, List.empty, freeVars)
+        val result = Term.betaReduce(deBruijn)
+        println(pretty(fromDeBruijn(result, freeVars.toList.sorted)))
+      case Left(err) => println(err)
   private def saveEnv(filename: String): Unit =
     Try {
       val out = new PrintWriter(File(filename))
@@ -144,111 +189,34 @@ object LambdaREPL extends App:
       println("Goodbye!")
       false
       
-    case ":help" | ":h" => 
-      println("""Commands:
-        |  let <n> = <expr>     - Define a variable
-        |  :env                 - Show environment
-        |  :clear               - Clear environment
-        |  :save <file>         - Save environment to file
-        |  :load <file>         - Load environment from file
-        |  :normalize on|off    - Toggle normalization (default: on)
-        |  :step <expr>         - Show single step reduction
-        |  :trace <expr>        - Show step-by-step evaluation
-        |  :eta <expr>          - Apply eta reduction
-        |  :db <expr>           - Show De Bruijn representation
-        |  :help, :h            - Show this help
-        |  :quit, :q            - Exit REPL
-        |  <expr>               - Evaluate expression""".stripMargin)
-      true
-      
-    case ":env" => 
-      if environment.isEmpty then println("Empty environment")
-      else environment.toSeq.sortBy(_._1).foreach((k, v) => println(s"$k = ${pretty(v)}"))
-      true
-      
-    case ":clear" => 
-      environment.clear()
-      println("Environment cleared")
-      true
+    case ":help" | ":h" => handleHelp(); true
+    case ":env" => handleEnv(); true
+    case ":clear" => handleClear(); true
     
-    case line if line.startsWith(":normalize ") =>
-      line.stripPrefix(":normalize ").trim.toLowerCase match
-        case "on" | "true" => 
-          normalizeResults = true
-          println("Normalization enabled - expressions will be fully reduced")
-        case "off" | "false" => 
-          normalizeResults = false
-          println("Normalization disabled - expressions will use single-step evaluation only")
-        case _ => println("Usage: :normalize on|off")
-      true
-      
     case line if line.startsWith(":step ") =>
-      val exprStr = line.stripPrefix(":step ").trim
-      LambdaParser.parse(exprStr) match
-        case Right(expr) =>
-          val (resolved, freeVars) = resolveAndGetFreeVars(expr)
-          val deBruijn = Term.toDeBruijn(resolved, List.empty, freeVars)
-          val stepped = Term.betaStep(deBruijn)
-          
-          if stepped == deBruijn then println(s"${pretty(resolved)} (already in normal form)")
-          else println(s"${pretty(resolved)} → ${pretty(fromDeBruijn(stepped, freeVars.toList.sorted))}")
-        case Left(err) => println(err)
-      true
-    case line if line.startsWith(":trace ") => trace(line.stripPrefix(":trace ").trim); true
-    case line if line.startsWith(":save ") => saveEnv(line.stripPrefix(":save ").trim); true
-    case line if line.startsWith(":load ") => loadEnv(line.stripPrefix(":load ").trim); true
-    case line if line.contains("==") => alphaEq(line); true
-
+      handleStep(line.stripPrefix(":step ").trim); true
+    case line if line.startsWith(":trace ") => 
+      trace(line.stripPrefix(":trace ").trim); true
+    case line if line.startsWith(":save ") => 
+      saveEnv(line.stripPrefix(":save ").trim); true
+    case line if line.startsWith(":load ") => 
+      loadEnv(line.stripPrefix(":load ").trim); true
     case line if line.startsWith(":eta ") =>
-      val exprStr = line.stripPrefix(":eta ").trim
-      LambdaParser.parse(exprStr) match
-        case Right(expr) =>
-          val (resolved, freeVars) = resolveAndGetFreeVars(expr)
-          val deBruijn = Term.toDeBruijn(resolved, List.empty, freeVars)
-          val etaReduced = Term.eta(deBruijn)
-          val result = fromDeBruijn(etaReduced, freeVars.toList.sorted)
-          println(s"η-reduction: ${pretty(resolved)} → ${pretty(result)}")
-        case Left(err) => println(err)
-      true
-
-    case line if line.startsWith(":db ") =>
-      val exprStr = line.stripPrefix(":db ").trim
-      LambdaParser.parse(exprStr) match
-        case Right(expr) =>
-          val (resolved, freeVars) = resolveAndGetFreeVars(expr)
-          val deBruijn = Term.toDeBruijn(resolved, List.empty, freeVars)
-          println(s"Named: ${pretty(resolved)}")
-          println(s"De Bruijn: ${prettyDB(deBruijn)}")
-          println(s"Free vars: ${freeVars.toList.sorted.mkString(", ")}")
-        case Left(err) => println(err)
-      true
+      handleEta(line.stripPrefix(":eta ").trim); true
       
     case line if line.startsWith("let ") =>
       line.drop(4).split("=", 2).map(_.trim) match
-        case Array(name, exprStr) if name.nonEmpty && exprStr.nonEmpty =>
-          LambdaParser.parse(exprStr) match
-            case Right(expr) =>
-              environment(name) = expr
-              println(s"$name = ${pretty(expr)}")
-            case Left(err) => println(err)
+        case Array(name, exprStr) => handleLet(name, exprStr)
         case _ => println("Usage: let <n> = <expr>")
       true
       
-    case line if line.nonEmpty => 
-      LambdaParser.parse(line) match
-        case Right(expr) =>
-          val (resolved, freeVars) = resolveAndGetFreeVars(expr)
-          val deBruijn = Term.toDeBruijn(resolved, List.empty, freeVars)
-          val result = if normalizeResults then Term.betaReduce(deBruijn) else Term.betaStep(deBruijn)
-          println(pretty(fromDeBruijn(result, freeVars.toList.sorted)))
-        case Left(err) => println(err)
-      true
+    case line if line.contains("==") => handleAlphaEq(line); true
+    case line if line.nonEmpty => handleEval(line); true
     case _ => true
 
   // Main REPL loop
   println("Lambda Calculus REPL")
   println("Type :help for commands, :q to quit")
-  println(s"Normalization: ${if normalizeResults then "enabled" else "disabled"}")
 
   Iterator.continually(readLine("λ> "))
     .takeWhile(_ != null)
